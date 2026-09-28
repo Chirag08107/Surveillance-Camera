@@ -1,0 +1,32 @@
+# --- Steps 1-7 (already in your original project) ---
+opencv-python>=4.9.0
+ultralytics>=8.3.0
+numpy>=1.26.0
+
+# --- Step 8-11: features, dataset, model, anomaly ---
+torch>=2.2.0
+scikit-learn>=1.4.0
+
+# --- Step 12: face recognition (optional - needs a dlib build) ---
+# On Windows/Mac this often needs cmake + Visual Studio Build Tools /
+# Xcode command line tools installed first: `pip install cmake dlib` before this.
+# If you don't need face recognition, comment these two lines out.
+face_recognition>=1.3.0
+dlib>=19.24.0
+
+# --- Step 13: ANPR ---
+easyocr>=1.7.1
+
+# --- Step 14: FastAPI + PostgreSQL backend ---
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.9
+pydantic>=2.6.0
+python-multipart>=0.0.9
+requests>=2.31.0
+
+# --- Step 16: LLM incident summaries ---
+anthropic>=0.34.0
+
+python-dotenv>=1.0.1

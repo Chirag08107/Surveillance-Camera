@@ -1,0 +1,31 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: surveillance
+      POSTGRES_PASSWORD: surveillance
+      POSTGRES_DB: surveillance_db
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  backend:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - db
+    environment:
+      DATABASE_URL: postgresql://surveillance:surveillance@db:5432/surveillance_db
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+    ports:
+      - "8000:8000"
+
+  # The pipeline (steps 1-13, video processing) needs camera/video file
+  # access and is usually run on a separate GPU-equipped machine, not in
+  # this compose stack. Run it manually against the backend's URL:
+  #   python pipeline.py --video videos/test.mp4 --backend-url http://localhost:8000 --headless
+
+volumes:
+  pgdata:
