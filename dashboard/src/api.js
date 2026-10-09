@@ -1,54 +1,105 @@
+
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 const WS_URL = import.meta.env.VITE_WS_URL || "ws://localhost:8000/ws/live";
 
-export async function getLatestDetections() {
-  const res = await fetch(`${API_URL}/api/detections/latest`);
-  if (!res.ok) throw new Error("Failed to fetch detections");
-  return res.json();
+async function request(path, options = {}) {
+  const response = await fetch(`${API_URL}${path}`, options);
+
+  if (!response.ok) {
+    let message = `Request failed (${response.status})`;
+
+    try {
+      const body = await response.json();
+      message = body.detail || body.message || message;
+    } catch {
+      // Keep the HTTP error message if the response is not JSON.
+    }
+
+    throw new Error(message);
+  }
+
+  return response.json();
 }
 
-export async function getZoneEvents() {
-  const res = await fetch(`${API_URL}/api/events/zone`);
-  if (!res.ok) throw new Error("Failed to fetch zone events");
-  return res.json();
+export function getLatestDetections() {
+  return request("/api/detections/latest");
 }
 
-export async function getAnomalies() {
-  const res = await fetch(`${API_URL}/api/events/anomalies`);
-  if (!res.ok) throw new Error("Failed to fetch anomalies");
-  return res.json();
+export function getZoneEvents() {
+  return request("/api/events/zone");
 }
 
-export async function summarizeAnomaly(id) {
-  const res = await fetch(`${API_URL}/api/events/anomalies/${id}/summarize`, { method: "POST" });
-  if (!res.ok) throw new Error("Failed to summarize anomaly");
-  return res.json();
+export function getAnomalies() {
+  return request("/api/events/anomalies");
 }
 
-export async function getIdentities() {
-  const res = await fetch(`${API_URL}/api/identities/`);
-  if (!res.ok) throw new Error("Failed to fetch identities");
-  return res.json();
+export function summarizeAnomaly(id) {
+  return request(`/api/events/anomalies/${id}/summarize`, {
+    method: "POST",
+  });
+}
+
+export function getIdentities() {
+  return request("/api/identities/");
+}
+
+export function uploadVideo(file) {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  return request("/api/monitoring/upload", {
+    method: "POST",
+    body: formData,
+  });
+}
+
+export function getMonitoringStatus() {
+  return request("/api/monitoring/status");
+}
+
+export function stopMonitoring() {
+  return request("/api/monitoring/stop", {
+    method: "POST",
+  });
+}
+
+export function getVideoUrl(path) {
+  if (!path) return "";
+
+  if (/^https?:\/\//i.test(path)) {
+    return path;
+  }
+
+  return `${API_URL}${path.startsWith("/") ? "" : "/"}${path}`;
 }
 
 export function connectLiveSocket(onMessage, onStatusChange) {
-  let socket;
-  let retryTimer;
+  let socket = null;
+  let retryTimer = null;
+  let closedByClient = false;
 
   function open() {
+    if (closedByClient) return;
+
     socket = new WebSocket(WS_URL);
 
     socket.onopen = () => onStatusChange?.(true);
+
     socket.onclose = () => {
       onStatusChange?.(false);
-      retryTimer = setTimeout(open, 3000);
+
+      if (!closedByClient) {
+        retryTimer = setTimeout(open, 3000);
+      }
     };
-    socket.onerror = () => socket.close();
+
+    socket.onerror = () => socket?.close();
+
     socket.onmessage = (event) => {
       try {
         onMessage(JSON.parse(event.data));
       } catch {
-        // ignore malformed frames
+        // Ignore malformed messages.
       }
     };
   }
@@ -56,6 +107,7 @@ export function connectLiveSocket(onMessage, onStatusChange) {
   open();
 
   return () => {
+    closedByClient = true;
     clearTimeout(retryTimer);
     socket?.close();
   };

@@ -1,167 +1,402 @@
-import { useEffect, useState, useCallback } from "react";
+
+import { useCallback, useEffect, useState } from "react";
+
 import {
   getLatestDetections,
   getZoneEvents,
   getAnomalies,
-  getIdentities,
   connectLiveSocket,
 } from "./api";
-import DetectionsTable from "./components/DetectionsTable";
-import ZoneEventsPanel from "./components/ZoneEventsPanel";
+
+import UploadVideo from "./components/UploadVideo";
+import LiveMonitoring from "./components/LiveMonitoring";
 import AnomalyPanel from "./components/AnomalyPanel";
-import IdentitiesPanel from "./components/IdentitiesPanel";
 import AnalyticsPanel from "./components/AnalyticsPanel";
 
 const TABS = [
-  { id: "live", label: "Live Feed" },
-  { id: "events", label: "Zone Events" },
-  { id: "anomalies", label: "Anomalies" },
-  { id: "identities", label: "Identities" },
-  { id: "analytics", label: "Analytics" },
+  { id: "upload", label: "Upload Video", icon: "↑" },
+  { id: "live", label: "Live Monitoring", icon: "◉" },
+  { id: "anomalies", label: "Anomalies", icon: "⚠" },
+  { id: "analytics", label: "Analytics", icon: "▥" },
 ];
 
 export default function App() {
-  const [tab, setTab] = useState("live");
+  const [tab, setTab] = useState("upload");
   const [connected, setConnected] = useState(false);
   const [detections, setDetections] = useState([]);
   const [zoneEvents, setZoneEvents] = useState([]);
   const [anomalies, setAnomalies] = useState([]);
-  const [identities, setIdentities] = useState([]);
+  const [session, setSession] = useState(null);
+
+  // A session remains visible after processing finishes.
+  const [monitoring, setMonitoring] = useState(false);
+  const [processing, setProcessing] = useState(false);
 
   const refreshAll = useCallback(async () => {
     try {
-      const [d, z, a, i] = await Promise.all([
+      const [d, z, a] = await Promise.all([
         getLatestDetections(),
         getZoneEvents(),
         getAnomalies(),
-        getIdentities(),
       ]);
-      setDetections(d);
-      setZoneEvents(z);
-      setAnomalies(a);
-      setIdentities(i);
-    } catch (e) {
-      // Backend not reachable yet - dashboard still renders, just empty.
-      console.warn("Backend unreachable:", e.message);
+
+      setDetections(Array.isArray(d) ? d : []);
+      setZoneEvents(Array.isArray(z) ? z : []);
+      setAnomalies(Array.isArray(a) ? a : []);
+    } catch (error) {
+      console.warn(
+        "Unable to refresh dashboard:",
+        error.message
+      );
     }
   }, []);
 
+  // Load database history when no uploaded session is active.
   useEffect(() => {
+    if (monitoring) return undefined;
+
     refreshAll();
-    const interval = setInterval(refreshAll, 5000); // periodic backstop refresh
+
+    const interval = setInterval(refreshAll, 5000);
+
     return () => clearInterval(interval);
-  }, [refreshAll]);
+  }, [refreshAll, monitoring]);
 
   useEffect(() => {
-    const close = connectLiveSocket((msg) => {
-      if (msg.type === "frame") {
-        if (msg.detections?.length) {
-          setDetections((prev) => {
-            const byId = new Map(prev.map((d) => [d.track_id, d]));
-            msg.detections.forEach((d) => byId.set(d.track_id, d));
-            return Array.from(byId.values());
+    const closeSocket = connectLiveSocket((message) => {
+      if (message?.type !== "frame") return;
+
+      if (
+        Array.isArray(message.detections) &&
+        message.detections.length
+      ) {
+        setDetections((previous) => {
+          const byTrack = new Map(
+            previous.map((item) => [
+              String(item.track_id),
+              item,
+            ])
+          );
+
+          message.detections.forEach((item) => {
+            if (
+              item.track_id === undefined ||
+              item.track_id === null
+            ) {
+              return;
+            }
+
+            const key = String(item.track_id);
+
+            byTrack.set(key, {
+              ...byTrack.get(key),
+              ...item,
+              _receivedAt: Date.now(),
+            });
           });
-        }
-        if (msg.zone_events?.length) {
-          setZoneEvents((prev) => [
-            ...msg.zone_events.map((e, idx) => ({ ...e, id: `live-${Date.now()}-${idx}`, timestamp: msg.timestamp })),
-            ...prev,
-          ].slice(0, 200));
-        }
-        if (msg.anomaly_events?.length) {
-          setAnomalies((prev) => [
-            ...msg.anomaly_events.map((a, idx) => ({ ...a, id: `live-${Date.now()}-${idx}`, timestamp: msg.timestamp, incident_summary: null })),
-            ...prev,
-          ].slice(0, 200));
-        }
+
+          const now = Date.now();
+
+          return Array.from(byTrack.values()).filter(
+            (item) =>
+              !item._receivedAt ||
+              now - item._receivedAt < 30000
+          );
+        });
+      }
+
+      // Zone events remain available internally for Live Monitoring.
+      if (
+        Array.isArray(message.zone_events) &&
+        message.zone_events.length
+      ) {
+        setZoneEvents((previous) => [
+          ...message.zone_events.map((event, index) => ({
+            ...event,
+            id: `live-zone-${Date.now()}-${index}`,
+            timestamp: event.timestamp || message.timestamp,
+            _sessionEvent: true,
+          })),
+          ...previous,
+        ].slice(0, 200));
+      }
+
+      if (
+        Array.isArray(message.anomaly_events) &&
+        message.anomaly_events.length
+      ) {
+        setAnomalies((previous) => [
+          ...message.anomaly_events.map((event, index) => ({
+            ...event,
+            id: `live-anomaly-${Date.now()}-${index}`,
+            timestamp: event.timestamp || message.timestamp,
+            incident_summary: null,
+            _sessionEvent: true,
+          })),
+          ...previous,
+        ].slice(0, 200));
       }
     }, setConnected);
 
-    return close;
+    return closeSocket;
+  }, []);
+
+  const people = detections.filter(
+    (item) => item.class_name?.toLowerCase() === "person"
+  );
+
+  const zoneWarnings = people.filter(
+    (item) => item.in_restricted_zone
+  ).length;
+
+  const flaggedPeople = people.filter(
+    (item) => item.behavior?.toLowerCase() === "anomaly"
+  ).length;
+
+  function handleUploadComplete(uploadedSession) {
+    // Start the new session with no previous-session results.
+    setSession(uploadedSession);
+    setDetections([]);
+    setZoneEvents([]);
+    setAnomalies([]);
+    setMonitoring(true);
+    setProcessing(true);
+    setTab("live");
+  }
+
+  const handleProcessingStopped = useCallback(() => {
+    setProcessing(false);
+  }, []);
+
+  const handleSessionClosed = useCallback(() => {
+    setProcessing(false);
+    setMonitoring(false);
+    setSession(null);
+    setDetections([]);
+    setZoneEvents([]);
+    setAnomalies([]);
+    setTab("upload");
   }, []);
 
   return (
-    <div className="app">
+    <div className="app-shell">
       <aside className="sidebar">
-        <h1>Sentinel</h1>
-        <div className="subtitle">Behavioral Intelligence</div>
-
-        {TABS.map((t) => (
-          <div
-            key={t.id}
-            className={`nav-item ${tab === t.id ? "active" : ""}`}
-            onClick={() => setTab(t.id)}
-          >
-            {t.label}
+        <div className="brand">
+          <div className="brand-mark">
+            <span />
+            <span />
+            <span />
           </div>
-        ))}
+
+          <div>
+            <div className="brand-name">SENTINEL</div>
+            <div className="brand-subtitle">
+              Behavioral Intelligence
+            </div>
+          </div>
+        </div>
+
+        <div className="system-status">
+          <span
+            className={`system-dot ${
+              connected ? "online" : "offline"
+            }`}
+          />
+
+          <div>
+            <div className="system-status-title">
+              {connected ? "SYSTEM ONLINE" : "CONNECTING"}
+            </div>
+
+            <div className="system-status-subtitle">
+              {connected
+                ? "Live telemetry connected"
+                : "Connecting to backend"}
+            </div>
+          </div>
+        </div>
+
+        <nav className="navigation">
+          <div className="nav-label">SURVEILLANCE</div>
+
+          {TABS.map((item) => (
+            <button
+              key={item.id}
+              className={`nav-item ${
+                tab === item.id ? "active" : ""
+              }`}
+              onClick={() => setTab(item.id)}
+              type="button"
+            >
+              <span className="nav-icon">{item.icon}</span>
+              <span>{item.label}</span>
+
+              {item.id === "anomalies" &&
+                anomalies.length > 0 && (
+                  <span className="nav-badge">
+                    {anomalies.length}
+                  </span>
+                )}
+            </button>
+          ))}
+        </nav>
+
+        <div className="sidebar-footer">
+          <div className="sidebar-footer-line" />
+          <div className="sidebar-footer-text">
+            SENTINEL ENGINE
+          </div>
+          <div className="sidebar-footer-version">
+            AI Surveillance Platform · v1.0
+          </div>
+        </div>
       </aside>
 
-      <main className="main">
-        <div className="topbar">
-          <h2 style={{ margin: 0, fontWeight: 500, fontSize: 18 }}>
-            {TABS.find((t) => t.id === tab)?.label}
-          </h2>
-          <div className="conn">
-            <span className={`status-dot ${connected ? "online" : "offline"}`} />
-            {connected ? "Live feed connected" : "Live feed disconnected — retrying"}
+      <main className="main-content">
+        <header className="topbar">
+          <div>
+            <div className="page-kicker">
+              SURVEILLANCE CONTROL
+            </div>
+            <h1>
+              {TABS.find((item) => item.id === tab)?.label}
+            </h1>
           </div>
-        </div>
 
-        <div className="grid">
-          <div className="card">
-            <h3>Active tracks</h3>
-            <div className="metric">{detections.length}</div>
+          <div className="connection-indicator">
+            <span
+              className={`connection-dot ${
+                connected ? "online" : "offline"
+              }`}
+            />
+            {connected
+              ? "Live feed connected"
+              : "Live feed disconnected"}
           </div>
-          <div className="card">
-            <h3>In restricted zone</h3>
-            <div className="metric">{detections.filter((d) => d.in_restricted_zone).length}</div>
-          </div>
-          <div className="card">
-            <h3>Open anomalies</h3>
-            <div className={`metric ${anomalies.length ? "alert" : ""}`}>{anomalies.length}</div>
-          </div>
-          <div className="card">
-            <h3>Enrolled identities</h3>
-            <div className="metric">{identities.length}</div>
-          </div>
-        </div>
+        </header>
 
-        {tab === "live" && (
-          <div className="panel">
-            <h2>Currently Tracked</h2>
-            <DetectionsTable detections={detections} />
-          </div>
+        <section className="metrics-grid">
+          <MetricCard
+            label="TRACKED PEOPLE"
+            value={monitoring ? people.length : 0}
+            description="People in the current monitoring view"
+            tone="blue"
+            icon="◉"
+          />
+
+          <MetricCard
+            label="ZONE WARNINGS"
+            value={monitoring ? zoneWarnings : 0}
+            description="People currently inside a restricted zone"
+            tone="yellow"
+            icon="⚠"
+          />
+
+          <MetricCard
+            label="ANOMALY FLAGS"
+            value={monitoring ? flaggedPeople : 0}
+            description="Tracks flagged by the behavior classifier"
+            tone="red"
+            icon="!"
+          />
+
+          <MetricCard
+            label="SESSION"
+            value={
+              processing
+                ? "LIVE"
+                : monitoring
+                  ? "COMPLETE"
+                  : "IDLE"
+            }
+            description={
+              session?.video_name || "Upload a video to begin"
+            }
+            tone="purple"
+            icon="▣"
+          />
+        </section>
+
+        {tab === "upload" && (
+          <UploadVideo
+            onUploadComplete={handleUploadComplete}
+          />
         )}
 
-        {tab === "events" && (
-          <div className="panel">
-            <h2>Restricted Zone Entries / Exits</h2>
-            <ZoneEventsPanel events={zoneEvents} />
-          </div>
+        {tab === "live" && (
+          <LiveMonitoring
+            detections={monitoring ? detections : []}
+            zoneEvents={monitoring ? zoneEvents : []}
+            anomalies={monitoring ? anomalies : []}
+            session={session}
+            monitoring={monitoring}
+            processing={processing}
+            onStopped={handleProcessingStopped}
+            onCloseSession={handleSessionClosed}
+          />
         )}
 
         {tab === "anomalies" && (
-          <div className="panel">
-            <h2>Flagged Behavior</h2>
-            <AnomalyPanel anomalies={anomalies} onUpdated={refreshAll} />
-          </div>
-        )}
-
-        {tab === "identities" && (
-          <div className="panel">
-            <h2>Enrolled Identities (Consent-Based)</h2>
-            <IdentitiesPanel identities={identities} onUpdated={refreshAll} />
-          </div>
+          <section className="page-panel">
+            <PanelHeading
+              kicker="INCIDENT REVIEW"
+              title="Detected Anomalies"
+            />
+            <AnomalyPanel
+              anomalies={anomalies}
+              onUpdated={refreshAll}
+            />
+          </section>
         )}
 
         {tab === "analytics" && (
-          <div className="panel">
-            <h2>Behavior Distribution</h2>
-            <AnalyticsPanel detections={detections} />
-          </div>
+          <section className="page-panel">
+            <PanelHeading
+              kicker="SYSTEM INSIGHTS"
+              title="Behavior Analytics"
+            />
+            <AnalyticsPanel
+              detections={detections}
+              anomalies={anomalies}
+            />
+          </section>
         )}
       </main>
+    </div>
+  );
+}
+
+function MetricCard({
+  label,
+  value,
+  description,
+  tone,
+  icon,
+}) {
+  return (
+    <div className={`metric-card ${tone}-card`}>
+      <div className="metric-card-top">
+        <span className="metric-label">{label}</span>
+        <span className={`metric-icon ${tone}`}>
+          {icon}
+        </span>
+      </div>
+
+      <div className="metric-value">{value}</div>
+      <div className="metric-description">
+        {description}
+      </div>
+    </div>
+  );
+}
+
+function PanelHeading({ kicker, title }) {
+  return (
+    <div className="panel-heading">
+      <div>
+        <div className="panel-kicker">{kicker}</div>
+        <h2>{title}</h2>
+      </div>
     </div>
   );
 }

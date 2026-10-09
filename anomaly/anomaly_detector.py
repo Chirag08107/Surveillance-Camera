@@ -22,7 +22,7 @@ get sharper once you have a trained classifier with anomaly classes.
 from collections import deque, defaultdict
 import numpy as np
 
-ANOMALOUS_CLASS_NAMES = {"Falling", "Loitering", "Running", "Fighting"}
+ANOMALOUS_CLASS_NAMES = {"Falling", "Loitering", "Running", "Fighting", "Anomaly", "anomaly"}
 
 
 class AnomalyDetector:

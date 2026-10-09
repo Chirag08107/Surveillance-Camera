@@ -13,7 +13,7 @@ import torch.nn as nn
 
 
 class BehaviorLSTM(nn.Module):
-    def __init__(self, input_dim: int, num_classes: int, hidden_dim: int = 64, num_layers: int = 1, dropout: float = 0.2):
+    def __init__(self, input_dim: int = 13, num_classes: int = 2, hidden_dim: int = 64, num_layers: int = 1, dropout: float = 0.2):
         super().__init__()
 
         self.lstm = nn.LSTM(

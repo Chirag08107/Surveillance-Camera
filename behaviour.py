@@ -202,7 +202,7 @@ class BehaviorAnalyzer:
 
     def calculate_pose_movement(self, track_id):
 
-        history = self.pose_history[track_id]
+        history = self.pose_history.get(track_id, [])
 
         if len(history) < 2:
             return 0
@@ -325,7 +325,7 @@ class BehaviorAnalyzer:
 
     def get_movement_features(self, track_id):
 
-        history = self.pose_history[track_id]
+        history = self.pose_history.get(track_id, [])
 
         if len(history) < 2:
             return 0, 0, 0
@@ -417,7 +417,7 @@ class BehaviorAnalyzer:
 
     def calculate_center_displacement(self, track_id):
 
-        history = self.center_history[track_id]
+        history = self.center_history.get(track_id, [])
 
         if len(history) < 2:
             return 0
@@ -444,7 +444,7 @@ class BehaviorAnalyzer:
 
     def calculate_center_velocity_vector(self, track_id, fps):
 
-        history = self.center_history[track_id]
+        history = self.center_history.get(track_id, [])
 
         if len(history) < 2:
             return 0, 0

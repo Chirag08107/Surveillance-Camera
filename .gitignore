@@ -2,7 +2,6 @@ venv/
 __pycache__/
 *.pyc
 *.pyo
-.env.example
 .vscode/
 .idea/
 .DS_Store
@@ -10,3 +9,7 @@ yolo26n.pt
 yolo26n-pose.pt
 videos/
 node_modules/
+dataset/raw/
+dataset/*.npz
+model/checkpoints/
+.env
